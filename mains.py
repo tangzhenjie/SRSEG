@@ -16,6 +16,8 @@ from SRSEGNet import SRSEGNet
 
 from loss import FALoss
 
+from metrics import RunningScore
+
 def main():
     # parsers
     main_parser = argparse.ArgumentParser(description="parser for SRSEG network")
@@ -23,14 +25,7 @@ def main():
                               help="set it to 1 for running on GPU, 0 for CPU")
     main_parser.add_argument("--batch_size", type=int, default=32, help="batch size, default set to 64")
     main_parser.add_argument("--epochs", type=int, default=40, help="epochs, default set to 20")
-    main_parser.add_argument("--n_feats", type=int, default=256, help="n_feats, default set to 256")
-    main_parser.add_argument("--n_blocks", type=int, default=4, help="n_blocks, default set to 6")
-    main_parser.add_argument("--n_layers", type=int, default=2, help="n_blocks, default set to 6")
-    main_parser.add_argument("--n_subs", type=int, default=4, help="n_subs, default set to 8")
-    main_parser.add_argument("--n_ovls", type=int, default=0, help="n_ovls, default set to 1")
-    main_parser.add_argument("--n_scale", type=int, default=8, help="n_scale, default set to 2")
-    main_parser.add_argument("--use_share", type=bool, default=True, help="f_share, default set to 1")
-
+    main_parser.add_argument("--num_classes", type=int, default=2, help="the class for segmentation")
     # datasets
     main_parser.add_argument("--dataset_name", type=str, default="InriaDataset",
                               help="dataset_name, default set to dataset_name")
@@ -43,10 +38,6 @@ def main():
     main_parser.add_argument("--learning_rate", type=float, default=1.5e-4,
                               help="learning rate, default set to 1e-4")
     main_parser.add_argument("--weight_decay", type=float, default=0, help="weight decay, default set to 0")
-
-
-    main_parser.add_argument("--save_dir", type=str, default="./trained_model/",
-                              help="directory for saving trained models, default is trained_model folder")
     main_parser.add_argument("--gpus", type=str, default="1", help="gpu ids (default: 7)")
 
     args = main_parser.parse_args()
@@ -60,6 +51,7 @@ def main():
 
 # global settings
 resume = False
+log_interval = 50
 
 def train(args):
     device = torch.device("cuda" if args.cuda else "cpu")
@@ -74,10 +66,8 @@ def train(args):
     test_path  = './datasets/' + args.dataset_name + '/tests/'
 
     train_set = GenerateData(image_dir=train_path, img_size=args.img_size, lr_img_size=args.img_size // args.up_scale, augment=True)
-    test_set = GenerateData(image_dir=test_path, img_size=500, lr_img_size=500 // args.up_scale, augment=False)
-
     train_loader = DataLoader(train_set, batch_size=args.batch_size, num_workers=8, shuffle=True)
-    test_loader = DataLoader(test_set, batch_size=1, shuffle=False)
+
 
     print('===> Building model')
     net = SRSEGNet()
@@ -122,6 +112,7 @@ def train(args):
             img, label, img_lr = img.to(device), label.to(device), img_lr.to(device)
             optimizer.zero_grad()
             img_sr, seg_pre, feature_sr, feature_seg = net(img_lr)
+            seg = seg_pre.data.max(1)[1]     # for visualization
             loss_sr = SR_loss(img_sr, img)
             loss_seg = SEG_loss(seg_pre, label.long().squeeze(1))
             loss_FA = FA_loss(feature_sr, feature_seg)
@@ -131,17 +122,68 @@ def train(args):
             optimizer.step()
 
             # tensorboard visualization
+            if (iteration + log_interval) % log_interval == 0:
+                print("===> {} GPU{}\tEpoch[{}]({}/{}): Loss: {:.6f}".format(time.ctime(),
+                                                                             args.gpus, e + 1,
+                                                                             iteration + 1,
+                                                                             len(train_loader), loss_all.item()))
+                n_iter = e * len(train_loader) + iteration + 1
+                writer.add_scalar('scalar/train_loss', loss_all, n_iter)
+            if iteration == 0:
+                writer.add_image('image/epoch' + str(e) + 'img', (img.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'label', label.squeeze().cpu().numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(e) + 'img_lr', (img_lr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'img_sr', (img_sr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'seg', seg.squeeze().cpu().numpy()[0, :, :, :])
+        # tensorboard visualization
+        writer.add_scalar('scalar/avg_epoch_loss', epoch_meter.value()[0], e + 1)
 
+        # save model weights at checkpoints every 10 epochs
+        if (e + 1) % 10 == 0:
+            save_checkpoint(args, net, e + 1)
+    ## Save the testing results
+    print("Running testset")
+    print('===> Loading testset')
+    test_set = GenerateData(image_dir=test_path, img_size=500, lr_img_size=500 // args.up_scale, augment=False)
+    test_loader = DataLoader(test_set, batch_size=1, shuffle=False)
+    print('===> Start testing')
+    net.eval().cuda()
+    with torch.no_grad():
+        metrics = RunningScore(args.num_classes)
+        for i, (img, label, img_lr) in enumerate(test_loader):
+            img, label, img_lr = img, label, img_lr.to(device)
+            img_sr, seg_pre, feature_sr, feature_seg = net(img_lr)
+            seg = seg_pre.data.max(1)[1]  # for visualization
+            if i % 20 == 0:
+                writer.add_image('image/epoch' + str(i) + 'img', (img.squeeze().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'label', label.squeeze().numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(i) + 'img_lr', (img_lr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'img_sr', (img_sr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'seg', seg.squeeze().cpu().numpy()[0, :, :, :])
+            gt = np.squeeze(label.numpy(), axis=1)
+            pre = seg.cpu().numpy()
+            metrics.update(gt, pre)
+        val_class_iou, iu = metrics.get_scores()
+        print("IOU:" + str(val_class_iou))
 
-
-
-    print("testing")
-# poly learning rate
+        # poly learning rate
 def lr_poly(base_lr, iter, max_iter, power):
     return base_lr * ((1 - float(iter) / max_iter) ** (power))
 def adjust_learning_rate(start_lr, optimizer, i_iter, max_iter, power=0.9):
     lr = lr_poly(start_lr, i_iter, max_iter, power)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+def save_checkpoint(args, model, epoch):
+    device = torch.device("cuda" if args.cuda else "cpu")
+    model.eval().cpu()
+    checkpoint_model_dir = './checkpoints/'
+    if not os.path.exists(checkpoint_model_dir):
+        os.makedirs(checkpoint_model_dir)
+    ckpt_model_filename = args.model_title + "_ckpt_epoch_" + str(epoch) + ".pth"
+    ckpt_model_path = os.path.join(checkpoint_model_dir, ckpt_model_filename)
+    state = {"epoch": epoch, "model": model}
+    torch.save(state, ckpt_model_path)
+    model.to(device).train()
+    print("Checkpoint saved to {}".format(ckpt_model_path))
 if __name__ == "__main__":
     main()
