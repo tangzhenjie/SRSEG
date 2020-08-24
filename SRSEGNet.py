@@ -21,4 +21,4 @@ class SRSEGNet(nn.Module):
         seg_pre = None
         feature_seg = None
         feature_sr = None
-        return img_sr, seg_pre, feature_seg, feature_sr
+        return img_sr, seg_pre, feature_sr, feature_seg

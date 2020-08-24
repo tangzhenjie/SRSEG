@@ -1,7 +1,7 @@
 import torch
 
 class FALoss(torch.nn.Module):
-    def __init__(self, weight=1e-3):
+    def __init__(self):
         super(FALoss, self).__init__()
         self.FA_loss = "Module"
 

@@ -100,7 +100,7 @@ def train(args):
     net.to(device).train()
 
     # loss functions to choose
-    FA_loss = FALoss(weight=1e-3)
+    FA_loss = FALoss()
     SR_loss = torch.nn.MSELoss()
     SEG_loss = torch.nn.CrossEntropyLoss()
 
@@ -121,8 +121,17 @@ def train(args):
                                  args.epochs * len(train_loader), power=0.9)
             img, label, img_lr = img.to(device), label.to(device), img_lr.to(device)
             optimizer.zero_grad()
-            img_sr, seg_pre, feature_seg, feature_sr = net(img_lr)
-            loss_seg = SEG_loss()
+            img_sr, seg_pre, feature_sr, feature_seg = net(img_lr)
+            loss_sr = SR_loss(img_sr, img)
+            loss_seg = SEG_loss(seg_pre, label.long().squeeze(1))
+            loss_FA = FA_loss(feature_sr, feature_seg)
+            loss_all = loss_sr + loss_seg + loss_FA
+            epoch_meter.add(loss_all.item())
+            loss_all.backward()
+            optimizer.step()
+
+            # tensorboard visualization
+
 
 
 
