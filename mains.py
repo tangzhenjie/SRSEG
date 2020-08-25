@@ -23,7 +23,7 @@ def main():
     main_parser = argparse.ArgumentParser(description="parser for SRSEG network")
     main_parser.add_argument("--cuda", type=int, required=False, default=0,
                               help="set it to 1 for running on GPU, 0 for CPU")
-    main_parser.add_argument("--batch_size", type=int, default=32, help="batch size, default set to 64")
+    main_parser.add_argument("--batch_size", type=int, default=1, help="batch size, default set to 64")
     main_parser.add_argument("--epochs", type=int, default=40, help="epochs, default set to 20")
     main_parser.add_argument("--num_classes", type=int, default=2, help="the class for segmentation")
     # datasets
@@ -71,7 +71,7 @@ def train(args):
 
     print('===> Building model')
     net = SRSEGNet()
-    # print(net)
+    print(net)
     model_title = args.dataset_name + "_" + args.model_title + '_imgsize=' + str(args.img_size) + '_upscale' + str(args.up_scale)
     model_name = './checkpoints/' + model_title + "_ckpt_epoch_" + str(35) + ".pth"
     args.model_title = model_title
@@ -98,7 +98,7 @@ def train(args):
     # add L2 regularization
     optimizer = Adam(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     epoch_meter = meter.AverageValueMeter()
-    writer = SummaryWriter('./runs/' + model_title + '_' + str(time.ctime()))
+    writer = SummaryWriter('./runs/' + model_title + '_') #  + str(time.ctime())
 
 
     print('===> Start training')
