@@ -23,7 +23,7 @@ def main():
     main_parser.add_argument("--cuda", type=int, required=False, default=1,
                               help="set it to 1 for running on GPU, 0 for CPU")
     main_parser.add_argument("--batch_size", type=int, default=12, help="batch size, default set to 64")
-    main_parser.add_argument("--epochs", type=int, default=50, help="epochs, default set to 20")
+    main_parser.add_argument("--epochs", type=int, default=60, help="epochs, default set to 20")
     main_parser.add_argument("--num_classes", type=int, default=2, help="the class for segmentation")
     # datasets
     main_parser.add_argument("--dataset_name", type=str, default="InriaDataset",
