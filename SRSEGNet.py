@@ -3,26 +3,28 @@ import torch.nn as nn
 import networks
 
 class SRSEGNet(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, up_scale):
         super(SRSEGNet, self).__init__()
 
         # Encoder Network
         self.Encoder = networks.Encoder(is_restore_from_imagenet=True, resnet_weight_path="./resnetweight/")
         # Semantic Segmentation Branch
-        self.SegBranch = networks.Classifier_Module_Mul(1024, [6, 12, 18, 24], [6, 12, 18, 24], num_classes)
-        self.SegUpBranch =
-        # Super Resolution Branch
+        self.SegBranch = networks.SegBranch(2048, up_scale, num_classes)
 
+        # Super Resolution Branch
+        self.SRBranch = networks.SRBranch(2048, up_scale)
         # Feature Affinity Component
-        pass
+        self.FABranch = nn.Sequential(
+                    nn.Conv2d(2048 // up_scale, 2048 // up_scale, kernel_size=1),
+                    nn.BatchNorm2d(2048 // up_scale),
+                    nn.ReLU(inplace=True)
+                )
 
     def forward(self, img_lr):
-
         # forward the data
-        self.feature =  self.Encoder(img_lr)
+        backbone =  self.Encoder(img_lr)
         # get the high-resolution image, the segmentation map and two features for FA
-        img_sr = None
-        seg_pre = None
-        feature_seg = None
-        feature_sr = None
-        return img_sr, seg_pre, feature_sr, feature_seg
+        feature_seg, seg_pre = self.SegBranch(backbone)
+        feature_sr, img_sr = self.SRBranch(backbone)
+        feature_seg_FA = self.FABranch(feature_seg)
+        return img_sr, seg_pre, feature_sr, feature_seg_FA

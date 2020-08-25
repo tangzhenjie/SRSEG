@@ -71,7 +71,7 @@ class ResNetFCN(nn.Module):
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64, affine=affine_par)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=True)  # change
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # change
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=1, dilation=2)
@@ -125,25 +125,57 @@ def Encoder(is_restore_from_imagenet=True, resnet_weight_path="./resnetweight/")
 # Segmentation model
 ################################################
 class SegBranch(nn.Module):
-    def __init__(self, n_features, up_scale, bn=True, act='relu'):
+    def __init__(self, n_features, up_scale, num_classes, bn=True, act='relu'):
         super(SegBranch, self).__init__()
         m = []
         if (up_scale & (up_scale - 1)) == 0:  # Is scale = 2^n?
             for i in range(int(math.log(up_scale, 2))):
-                m.append(nn.ConvTranspose2d(n_features, n_features // ( 2 ** (i+1) ),
+                m.append(nn.ConvTranspose2d(n_features, n_features // 2,
                                    kernel_size=3, stride=2,
                                    padding=1, output_padding=1,
                                    bias=True))
                 if bn:
-                    m.append(nn.BatchNorm2d(n_features // ( 2 ** (i+1))))
+                    m.append(nn.BatchNorm2d(n_features // 2))
                 if act == 'relu':
                     m.append(nn.ReLU(True))
-
+                n_features = n_features // 2
         else:
             raise NotImplementedError
         self.upsample = nn.Sequential(*m)
+
+        self.classfier = nn.Conv2d(n_features, num_classes, kernel_size=1)
     def forward(self, x):
+        feature = self.upsample(x)
+        pre = self.classfier(feature)
 
+        return feature, pre
 
+################################################
+# Super resolution model
+################################################
+class SRBranch(nn.Module):
+    def __init__(self, n_features, up_scale, bn=True, act='relu'):
+        super(SRBranch, self).__init__()
+        m = []
+        if (up_scale & (up_scale - 1)) == 0:  # Is scale = 2^n?
+            for i in range(int(math.log(up_scale, 2))):
+                m.append(nn.ConvTranspose2d(n_features, n_features // 2,
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1,
+                                            bias=True))
+                m.append(nn.Conv2d(n_features // 2, n_features // 2, kernel_size=1))
+                if bn:
+                    m.append(nn.BatchNorm2d(n_features // 2))
+                if act == 'relu':
+                    m.append(nn.ReLU(True))
+                n_features = n_features // 2
+        else:
+            raise NotImplementedError
+        self.upsample = nn.Sequential(*m)
 
+        self.classfier = nn.Conv2d(n_features, 3, kernel_size=1)
+    def forward(self, x):
+        feature = self.upsample(x)
+        sr = self.classfier(feature)
 
+        return feature, sr

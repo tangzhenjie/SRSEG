@@ -9,7 +9,6 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from torchnet import meter
-import json
 
 from data import GenerateData
 from SRSEGNet import SRSEGNet
@@ -21,23 +20,23 @@ from metrics import RunningScore
 def main():
     # parsers
     main_parser = argparse.ArgumentParser(description="parser for SRSEG network")
-    main_parser.add_argument("--cuda", type=int, required=False, default=0,
+    main_parser.add_argument("--cuda", type=int, required=False, default=1,
                               help="set it to 1 for running on GPU, 0 for CPU")
-    main_parser.add_argument("--batch_size", type=int, default=1, help="batch size, default set to 64")
-    main_parser.add_argument("--epochs", type=int, default=40, help="epochs, default set to 20")
+    main_parser.add_argument("--batch_size", type=int, default=12, help="batch size, default set to 64")
+    main_parser.add_argument("--epochs", type=int, default=50, help="epochs, default set to 20")
     main_parser.add_argument("--num_classes", type=int, default=2, help="the class for segmentation")
     # datasets
     main_parser.add_argument("--dataset_name", type=str, default="InriaDataset",
                               help="dataset_name, default set to dataset_name")
-    main_parser.add_argument("--img_size", type=int, default=512, help="the img size to crop for training")
+    main_parser.add_argument("--img_size", type=int, default=256, help="the img size to crop for training")
     main_parser.add_argument("--up_scale", type=int, default=2, help="the img size to super resolution")
     # training
     main_parser.add_argument("--model_title", type=str, default="SRSEGNet",
                               help="model_title, default set to model_title")
     main_parser.add_argument("--seed", type=int, default=3000, help="start seed for model")
-    main_parser.add_argument("--learning_rate", type=float, default=1.5e-4,
+    main_parser.add_argument("--learning_rate", type=float, default=0.01,
                               help="learning rate, default set to 1e-4")
-    main_parser.add_argument("--weight_decay", type=float, default=0, help="weight decay, default set to 0")
+    main_parser.add_argument("--weight_decay", type=float, default=0.0005, help="weight decay, default set to 0")
     main_parser.add_argument("--gpus", type=str, default="1", help="gpu ids (default: 7)")
 
     args = main_parser.parse_args()
@@ -70,10 +69,10 @@ def train(args):
 
 
     print('===> Building model')
-    net = SRSEGNet()
-    print(net)
+    net = SRSEGNet(num_classes=args.num_classes, up_scale=int(8 * args.up_scale))
+    #print(net)
     model_title = args.dataset_name + "_" + args.model_title + '_imgsize=' + str(args.img_size) + '_upscale' + str(args.up_scale)
-    model_name = './checkpoints/' + model_title + "_ckpt_epoch_" + str(35) + ".pth"
+    model_name = './checkpoints/' + model_title + "_ckpt_epoch_" + str(50) + ".pth"
     args.model_title = model_title
     if torch.cuda.device_count() > 1:
         print("===> Let's use", torch.cuda.device_count(), "GPUs.")
@@ -98,7 +97,7 @@ def train(args):
     # add L2 regularization
     optimizer = Adam(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     epoch_meter = meter.AverageValueMeter()
-    writer = SummaryWriter('./runs/' + model_title + '_') #  + str(time.ctime())
+    writer = SummaryWriter('./runs/' + model_title + '_' + str(time.ctime())) #  + str(time.ctime())
 
 
     print('===> Start training')
@@ -116,7 +115,7 @@ def train(args):
             loss_sr = SR_loss(img_sr, img)
             loss_seg = SEG_loss(seg_pre, label.long().squeeze(1))
             loss_FA = FA_loss(feature_sr, feature_seg)
-            loss_all = loss_sr + loss_seg + loss_FA
+            loss_all = 0.1 * loss_sr + loss_seg + loss_FA
             epoch_meter.add(loss_all.item())
             loss_all.backward()
             optimizer.step()
@@ -130,11 +129,13 @@ def train(args):
                 n_iter = e * len(train_loader) + iteration + 1
                 writer.add_scalar('scalar/train_loss', loss_all, n_iter)
             if iteration == 0:
-                writer.add_image('image/epoch' + str(e) + 'img', (img.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(e) + 'label', label.squeeze().cpu().numpy()[0, :, :, :])
-                writer.add_image('image/epoch' + str(e) + 'img_lr', (img_lr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(e) + 'img_sr', (img_sr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(e) + 'seg', seg.squeeze().cpu().numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(e) + 'img', (img.cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'label', label.cpu().numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(e) + 'img_lr', (img_lr.cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'img_sr', (img_sr.cpu().detach().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(e) + 'seg', seg.unsqueeze(1).cpu().numpy()[0, :, :, :])
+        print("===> {}\tEpoch {} Training Complete: Avg. Loss: {:.6f}".format(time.ctime(), e + 1,
+                                                                              epoch_meter.value()[0]))
         # tensorboard visualization
         writer.add_scalar('scalar/avg_epoch_loss', epoch_meter.value()[0], e + 1)
 
@@ -144,7 +145,7 @@ def train(args):
     ## Save the testing results
     print("Running testset")
     print('===> Loading testset')
-    test_set = GenerateData(image_dir=test_path, img_size=500, lr_img_size=500 // args.up_scale, augment=False)
+    test_set = GenerateData(image_dir=test_path, img_size=512, lr_img_size=512 // args.up_scale, augment=False)
     test_loader = DataLoader(test_set, batch_size=1, shuffle=False)
     print('===> Start testing')
     net.eval().cuda()
@@ -155,11 +156,11 @@ def train(args):
             img_sr, seg_pre, feature_sr, feature_seg = net(img_lr)
             seg = seg_pre.data.max(1)[1]  # for visualization
             if i % 20 == 0:
-                writer.add_image('image/epoch' + str(i) + 'img', (img.squeeze().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(i) + 'label', label.squeeze().numpy()[0, :, :, :])
-                writer.add_image('image/epoch' + str(i) + 'img_lr', (img_lr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(i) + 'img_sr', (img_sr.squeeze().cpu().numpy()[0, :, :, :] + 1) / 2.0)
-                writer.add_image('image/epoch' + str(i) + 'seg', seg.squeeze().cpu().numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(i) + 'img', (img.numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'label', label.numpy()[0, :, :, :])
+                writer.add_image('image/epoch' + str(i) + 'img_lr', (img_lr.cpu().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'img_sr', (img_sr.cpu().detach().numpy()[0, :, :, :] + 1) / 2.0)
+                writer.add_image('image/epoch' + str(i) + 'seg', seg.unsqueeze(1).cpu().numpy()[0, :, :, :])
             gt = np.squeeze(label.numpy(), axis=1)
             pre = seg.cpu().numpy()
             metrics.update(gt, pre)
