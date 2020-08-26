@@ -36,7 +36,7 @@ def main():
     main_parser.add_argument("--seed", type=int, default=3000, help="start seed for model")
     main_parser.add_argument("--learning_rate", type=float, default=0.01,
                               help="learning rate, default set to 1e-4")
-    main_parser.add_argument("--weight_decay", type=float, default=0.0005, help="weight decay, default set to 0")
+    main_parser.add_argument("--weight_decay", type=float, default=0, help="weight decay, default set to 0")
     main_parser.add_argument("--gpus", type=str, default="1", help="gpu ids (default: 7)")
 
     args = main_parser.parse_args()
